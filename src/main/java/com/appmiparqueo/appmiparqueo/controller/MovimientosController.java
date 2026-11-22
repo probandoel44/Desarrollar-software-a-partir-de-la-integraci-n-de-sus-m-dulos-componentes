@@ -33,6 +33,7 @@ public class MovimientosController {
 
     @GetMapping("/movimientos")
     public String showMovimientos(Model model) {
+        parqueaderoService.expirarReservas(java.time.LocalDateTime.now());
         model.addAttribute("title", "Movimientos Recientes");
         model.addAttribute("description", "Consulta el historial de ingresos, salidas, reservas y actividades del parqueadero.");
         model.addAttribute("movimientos", movimientoRepository.findTop100ByOrderByFechaIngresoDesc());
@@ -51,6 +52,7 @@ public class MovimientosController {
             parqueaderoService.registrarIngreso(placa, tipoVehiculo, usuarioCliente);
             redirectAttributes.addFlashAttribute("mensaje", "Ingreso registrado correctamente.");
         } catch (IllegalArgumentException ex) {
+            parqueaderoService.registrarIncidente("Error al registrar ingreso", ex.getMessage());
             redirectAttributes.addFlashAttribute("error", ex.getMessage());
         }
         return "redirect:/movimientos";
@@ -63,6 +65,7 @@ public class MovimientosController {
             parqueaderoService.registrarSalida(placa, metodo);
             redirectAttributes.addFlashAttribute("mensaje", "Salida registrada y pago generado.");
         } catch (IllegalArgumentException ex) {
+            parqueaderoService.registrarIncidente("Error al registrar salida", ex.getMessage());
             redirectAttributes.addFlashAttribute("error", ex.getMessage());
         }
         return "redirect:/movimientos";

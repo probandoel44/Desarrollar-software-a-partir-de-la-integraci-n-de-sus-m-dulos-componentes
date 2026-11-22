@@ -12,6 +12,7 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 @Controller
 public class AlertasController {
+    private static final java.util.List<String> TIPOS_ALERTA = java.util.List.of("INFO", "ADVERTENCIA", "CRITICA");
 
     private final AlertaRepository alertaRepository;
     private final ParqueaderoService parqueaderoService;
@@ -25,9 +26,9 @@ public class AlertasController {
     public String showAlertas(Model model) {
         model.addAttribute("title", "Alertas");
         model.addAttribute("description", "Revisa las novedades y situaciones que requieren atención.");
-        model.addAttribute("alertas", alertaRepository.findByResueltaOrderByFechaDesc(false));
-        model.addAttribute("alertasResueltas", alertaRepository.findByResueltaOrderByFechaDesc(true));
-        model.addAttribute("alertasPendientes", alertaRepository.countByResueltaFalse());
+        model.addAttribute("alertas", alertaRepository.findByResueltaAndNivelInOrderByFechaDesc(false, TIPOS_ALERTA));
+        model.addAttribute("alertasResueltas", alertaRepository.findByResueltaAndNivelInOrderByFechaDesc(true, TIPOS_ALERTA));
+        model.addAttribute("alertasPendientes", alertaRepository.countByResueltaFalseAndNivelIn(TIPOS_ALERTA));
         return "alertas";
     }
 

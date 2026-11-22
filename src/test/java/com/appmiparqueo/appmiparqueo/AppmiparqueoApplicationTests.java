@@ -29,7 +29,14 @@ import com.appmiparqueo.appmiparqueo.repository.VehiculoRepository;
 import com.appmiparqueo.appmiparqueo.service.ParqueaderoService;
 import com.appmiparqueo.appmiparqueo.service.UsuariosAdminService;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +46,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -82,6 +90,131 @@ class AppmiparqueoApplicationTests {
 
 	@Value("${app.admin.email}")
 	private String adminEmail;
+
+	@Test
+	void reservationCanBeExtendedCancelledAndRemainsInHistory() {
+		Usuarios cliente = usuariosRepository.findByCorreo("cliente@miparqueo.local").orElseThrow();
+		String plate = "E" + Integer.toString((int) (System.nanoTime() % 1000000000L), 36).toUpperCase();
+		Vehiculo vehiculo = parqueaderoService.registrarVehiculo(cliente, plate, "automovil", "Prueba", "Extensión", "Verde");
+		Puesto disponible = puestoRepository.findFirstByEstadoOrderByCodigoAsc("disponible").orElseThrow();
+		LocalDateTime inicio = LocalDateTime.now().plusHours(1);
+		Reserva reserva = parqueaderoService.reservarEspacio(cliente, vehiculo.getId(), disponible.getId(),
+				inicio, inicio.plusHours(1));
+
+		parqueaderoService.extenderReserva(cliente, reserva.getId(), inicio.plusHours(2));
+		Assertions.assertEquals(inicio.plusHours(2), reservaRepository.findById(reserva.getId()).orElseThrow().getHoraFinEstimada());
+		Assertions.assertTrue(reservaRepository.findByUsuarioOrderByHoraInicioDesc(cliente).stream()
+				.anyMatch(item -> item.getId().equals(reserva.getId())));
+		Assertions.assertTrue(alertaRepository.findByUsuarioAndNivelStartingWithOrderByFechaDesc(cliente, "RESERVA_")
+				.stream().anyMatch(item -> "RESERVA_EXTENDIDA".equals(item.getNivel())));
+
+		parqueaderoService.cancelarReserva(cliente, reserva.getId());
+		Assertions.assertEquals("cancelada", reservaRepository.findById(reserva.getId()).orElseThrow().getEstado());
+		Assertions.assertTrue(parqueaderoService.consultarDisponibilidad(inicio, inicio.plusHours(2)).stream()
+				.anyMatch(item -> item.getId().equals(disponible.getId())));
+		Assertions.assertTrue(alertaRepository.findByUsuarioAndNivelStartingWithOrderByFechaDesc(cliente, "RESERVA_")
+				.stream().anyMatch(item -> "RESERVA_CANCELADA".equals(item.getNivel())));
+	}
+
+	@Test
+	void expiredReservationReleasesItsSpaceAndPreservesHistory() {
+		Usuarios cliente = usuariosRepository.findByCorreo("cliente@miparqueo.local").orElseThrow();
+		String plate = "V" + Integer.toString((int) (System.nanoTime() % 1000000000L), 36).toUpperCase();
+		Vehiculo vehiculo = parqueaderoService.registrarVehiculo(cliente, plate, "automovil", "Prueba", "Vencimiento", "Gris");
+		Puesto disponible = puestoRepository.findFirstByEstadoOrderByCodigoAsc("disponible").orElseThrow();
+		LocalDateTime fin = LocalDateTime.now().minusMinutes(1);
+		Reserva reserva = parqueaderoService.reservarEspacio(cliente, vehiculo.getId(), disponible.getId(),
+				fin.minusHours(1), fin);
+
+		parqueaderoService.expirarReservas(LocalDateTime.now());
+
+		Assertions.assertEquals("vencida", reservaRepository.findById(reserva.getId()).orElseThrow().getEstado());
+		Assertions.assertEquals("disponible", puestoRepository.findById(disponible.getId()).orElseThrow().getEstado());
+	}
+
+	@Test
+	void adjacentReservationsCanShareASpaceButAnExtensionCannotOverlap() {
+		Usuarios firstClient = crearUsuarioPrueba("extension-a-" + System.nanoTime() + "@example.com");
+		Usuarios secondClient = crearUsuarioPrueba("extension-b-" + System.nanoTime() + "@example.com");
+		String suffix = Integer.toString((int) (System.nanoTime() % 1000000000L), 36).toUpperCase();
+		Vehiculo firstVehicle = parqueaderoService.registrarVehiculo(firstClient, "F" + suffix, "automovil", "Prueba", "Uno", "Negro");
+		Vehiculo secondVehicle = parqueaderoService.registrarVehiculo(secondClient, "G" + suffix, "automovil", "Prueba", "Dos", "Blanco");
+		Puesto available = puestoRepository.findFirstByEstadoOrderByCodigoAsc("disponible").orElseThrow();
+		LocalDateTime startTime = LocalDateTime.now().plusHours(1);
+		Reserva firstReservation = parqueaderoService.reservarEspacio(firstClient, firstVehicle.getId(), available.getId(),
+				startTime, startTime.plusHours(1));
+		parqueaderoService.reservarEspacio(secondClient, secondVehicle.getId(), available.getId(),
+				startTime.plusHours(1), startTime.plusHours(2));
+
+		Assertions.assertThrows(IllegalArgumentException.class,
+				() -> parqueaderoService.extenderReserva(firstClient, firstReservation.getId(), startTime.plusHours(2)));
+		Assertions.assertEquals(startTime.plusHours(1),
+				reservaRepository.findById(firstReservation.getId()).orElseThrow().getHoraFinEstimada());
+	}
+
+	@Test
+	void invalidSimulatedVehicleReadIsReportedAndStoredAsIncident() throws Exception {
+		Usuarios admin = usuariosRepository.findByCorreo(adminEmail).orElseThrow();
+		MockHttpSession adminSession = new MockHttpSession();
+		adminSession.setAttribute("authenticatedUser", admin);
+		long alertsBefore = alertaRepository.countByResueltaFalseAndNivelIn(List.of("INFO", "ADVERTENCIA", "CRITICA"));
+
+		mockMvc.perform(post("/movimientos/acceso-simulado").session(adminSession)
+				.param("lectura", "INVALID-" + System.nanoTime())
+				.param("tipoLectura", "PLACA")
+				.param("operacion", "ENTRADA"))
+				.andExpect(status().is3xxRedirection())
+				.andExpect(redirectedUrl("/movimientos"));
+
+		Assertions.assertEquals(alertsBefore + 1,
+				alertaRepository.countByResueltaFalseAndNivelIn(List.of("INFO", "ADVERTENCIA", "CRITICA")));
+	}
+
+	@Test
+	@Transactional(propagation = Propagation.NOT_SUPPORTED)
+	void concurrentRequestsCannotReserveOverlappingPeriodsForOneSpace() throws Exception {
+		String suffix = Integer.toString((int) (System.nanoTime() % 1000000000L), 36).toUpperCase();
+		Usuarios firstClient = crearUsuarioPrueba("concurrent-a-" + suffix + "@example.com");
+		Usuarios secondClient = crearUsuarioPrueba("concurrent-b-" + suffix + "@example.com");
+		Vehiculo firstVehicle = parqueaderoService.registrarVehiculo(firstClient, "A" + suffix, "automovil", "Prueba", "A", "Rojo");
+		Vehiculo secondVehicle = parqueaderoService.registrarVehiculo(secondClient, "B" + suffix, "automovil", "Prueba", "B", "Azul");
+		Puesto available = puestoRepository.findFirstByEstadoOrderByCodigoAsc("disponible").orElseThrow();
+		LocalDateTime startTime = LocalDateTime.now().plusHours(1);
+		CountDownLatch ready = new CountDownLatch(2);
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		Callable<Boolean> firstRequest = reservationRequest(ready, start, firstClient, firstVehicle, available, startTime);
+		Callable<Boolean> secondRequest = reservationRequest(ready, start, secondClient, secondVehicle, available, startTime);
+
+		try {
+			Future<Boolean> firstResult = executor.submit(firstRequest);
+			Future<Boolean> secondResult = executor.submit(secondRequest);
+			Assertions.assertTrue(ready.await(5, TimeUnit.SECONDS));
+			start.countDown();
+			int accepted = (firstResult.get(10, TimeUnit.SECONDS) ? 1 : 0)
+					+ (secondResult.get(10, TimeUnit.SECONDS) ? 1 : 0);
+			Assertions.assertEquals(1, accepted);
+		} finally {
+			executor.shutdownNow();
+			usuariosAdminService.eliminarUsuario(firstClient.getId_usuario());
+			usuariosAdminService.eliminarUsuario(secondClient.getId_usuario());
+		}
+	}
+
+	private Callable<Boolean> reservationRequest(CountDownLatch ready, CountDownLatch start, Usuarios client,
+			Vehiculo vehicle, Puesto space, LocalDateTime startTime) {
+		return () -> {
+			ready.countDown();
+			if (!start.await(5, TimeUnit.SECONDS)) return false;
+			try {
+				parqueaderoService.reservarEspacio(client, vehicle.getId(), space.getId(),
+						startTime, startTime.plusHours(1));
+				return true;
+			} catch (IllegalArgumentException ex) {
+				return false;
+			}
+		};
+	}
 
 	@Test
 	void contextLoads() {

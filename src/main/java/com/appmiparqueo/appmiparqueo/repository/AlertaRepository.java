@@ -6,7 +6,8 @@ import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface AlertaRepository extends JpaRepository<Alerta, Integer> {
-    List<Alerta> findByResueltaOrderByFechaDesc(boolean resuelta);
+    List<Alerta> findByResueltaAndNivelInOrderByFechaDesc(boolean resuelta, List<String> niveles);
     List<Alerta> findByUsuario(Usuarios usuario);
-    long countByResueltaFalse();
+    List<Alerta> findByUsuarioAndNivelStartingWithOrderByFechaDesc(Usuarios usuario, String prefijo);
+    long countByResueltaFalseAndNivelIn(List<String> niveles);
 }

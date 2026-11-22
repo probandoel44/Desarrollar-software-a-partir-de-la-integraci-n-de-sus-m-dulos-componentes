@@ -8,7 +8,10 @@ import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface VehiculoRepository extends JpaRepository<Vehiculo, Integer> {
+    @EntityGraph(attributePaths = "usuario")
     Optional<Vehiculo> findByPlacaIgnoreCaseAndActivoTrue(String placa);
+    @EntityGraph(attributePaths = "usuario")
+    Optional<Vehiculo> findByCodigoQrAndActivoTrue(String codigoQr);
     List<Vehiculo> findByUsuarioAndActivoTrueOrderByPlacaAsc(Usuarios usuario);
     List<Vehiculo> findAllByUsuario(Usuarios usuario);
     @EntityGraph(attributePaths = "usuario")

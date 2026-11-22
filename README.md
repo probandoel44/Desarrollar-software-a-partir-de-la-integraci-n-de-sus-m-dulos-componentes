@@ -242,3 +242,88 @@ El registro también acepta opcionalmente `nombres`, `apellidos` y `telefono`.
 - El cliente consulta sus vehículos, espacios disponibles, reservas, estancias, pagos y puntos.
 - El administrador gestiona ocupación, ingresos y salidas, alertas, pagos, vehículos, fidelización y usuarios.
 - La eliminación definitiva de una cuenta elimina sus datos asociados y requiere confirmación.
+
+## Evidencia de requerimientos
+
+Los estados indican implementación en código, no ejecución verificada. La lectura QR y la barrera son simulaciones; no hay hardware ni protocolo conectado.
+
+| Requerimiento | Módulo y código | Pruebas | Estado |
+| --- | --- | --- | --- |
+| R01. Consultar disponibilidad por período y reservar un puesto. | `controller/ClienteController.java`, `service/ParqueaderoService.java`, `repository/ReservaRepository.java`, `static/js/cliente.js` | `ReservaRulesTest`, `AppmiparqueoApplicationTests` (consulta y concurrencia) | Implementado en código; pruebas pendientes de ejecución. |
+| R02. Extender/cancelar y actualizar disponibilidad conservando historial. | `ClienteController.java`, `ParqueaderoService.java`, `cliente.html`, `cliente.js` | `AppmiparqueoApplicationTests` (extensión, conflicto, cancelación y vencimiento) | Implementado en código; pruebas pendientes de ejecución. |
+| R03. Confirmar creación, extensión y cancelación dentro de la aplicación. | `ParqueaderoService.java`, `repository/AlertaRepository.java`, `cliente.html` | `AppmiparqueoApplicationTests` (avisos) | Implementado como notificación interna persistida; no se envía correo ni SMS. |
+| R04. Reconocer placa o simular lectura del código de un vehículo. | `service/SimuladorAccesoService.java`, `controller/AccesoSimuladoController.java`, `movimientos.html`, `model/Vehiculo.java` | `SimuladorAccesoServiceTest` | Simulado con entrada de texto; no hay OCR, cámara ni lector QR físico. |
+| R05. Accionar una barrera después de una lectura válida. | `service/BarreraSimulada.java`, `SimuladorAccesoService.java` | `BarreraSimuladaTest`, `SimuladorAccesoServiceTest` | Ciclo de apertura/cierre simulado; integración física pendiente. |
+| R06. Guardar entradas y salidas con fecha y hora. | `service/ParqueaderoService.java`, `model/Movimiento.java`, `repository/MovimientoRepository.java` | `AppmiparqueoApplicationTests` (ciclo de estacionamiento) | Implementado para operaciones manuales y simuladas; pruebas pendientes de ejecución. |
+| R07. Sincronizar lectura, operación y persistencia. | `ParqueaderoService.java`, `repository/PuestoRepository.java`, `repository/ReservaRepository.java` | `AppmiparqueoApplicationTests` (concurrencia) | Transacciones y bloqueo de puesto implementados en una instancia; sincronización con dispositivo físico pendiente. |
+| R08. Informar errores y registrar incidentes de acceso/operación. | `controller/AccesoSimuladoController.java`, `controller/MovimientosController.java`, `ParqueaderoService.java`, `AlertasController.java` | `SimuladorAccesoServiceTest`; falta prueba de integración para persistencia del incidente | Parcial: se registran errores de movimiento y lectura simulada como alertas administrativas. |
+| R09. Consultar historial propio de movimientos y reservas. | `ClienteController.java`, `MovimientoRepository.java`, `ReservaRepository.java`, `cliente.html` | `AppmiparqueoApplicationTests` (panel e historial de reserva) | Implementado en código; pruebas pendientes de ejecución. |
+| R10. Mantener actualizada la disponibilidad de la interfaz. | `DisponibilidadController.java`, `DisponibilidadEventPublisher.java`, `ClienteController.java`, `cliente.js` | Falta prueba de integración de SSE y actualización visual | Implementado mediante eventos SSE dentro de la instancia; sin SLA acordado y sin propagación entre varias instancias. |
+
+## Plataforma y capas
+
+- Sistema operativo de desarrollo observado: Windows; su versión no está especificada. El proyecto requiere Java 17 y Maven Wrapper (`mvnw.cmd`).
+- Backend: Spring Boot 2.5.14, Spring MVC y Bean Validation. El starter web utiliza normalmente Tomcat embebido; no se configura un servidor externo.
+- Reglas: servicios Spring (`service`). Persistencia: Spring Data JPA y MySQL Connector/J 8.0.33 (`repository` y `model`).
+- Interfaz: Thymeleaf, HTML, CSS y JavaScript sin framework frontend adicional (`templates` y `static`).
+- Seguridad existente: BCrypt y sesión web con interceptor de acceso por rol. La aplicación no incorpora `spring-boot-starter-security`; no se ha documentado una política formal de CSRF, privacidad ni conservación de datos.
+- Pruebas: JUnit 5, Mockito y Spring Test, gestionados por Spring Boot Test. No se encontró una base en memoria ni configuración de perfil de pruebas.
+
+La arquitectura actual es una aplicación MVC monolítica con MySQL. Un contenedor o máquina virtual no es requisito para ejecutarla; podría servir para aislar versiones y reproducir un ambiente de integración, pero añadirlos requeriría decidir y mantener esa infraestructura. No se agregaron por asumir que fueran obligatorios.
+
+## Ambientes
+
+### Desarrollo
+
+1. Instala Java 17 y MySQL 8. En Windows, XAMPP puede proporcionar MySQL; phpMyAdmin es opcional.
+2. Crea `miparqueo_db` y ejecuta el esquema SQL de la sección Base de datos. No hay migraciones automáticas; `ddl-auto=validate` requiere que el esquema exista.
+3. La configuración actual está en `src/main/resources/application.properties`. Se puede sobreescribir con variables de entorno de PowerShell; reemplaza los marcadores por valores locales y no los guardes en el repositorio:
+
+```powershell
+$env:SPRING_DATASOURCE_URL = "jdbc:mysql://localhost:3306/miparqueo_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+$env:SPRING_DATASOURCE_USERNAME = "<usuario-local>"
+$env:SPRING_DATASOURCE_PASSWORD = "<clave-local>"
+```
+
+4. Desde la carpeta raíz, inicia con `.\mvnw.cmd spring-boot:run`. La aplicación usa el puerto `8081`. El inicializador crea datos de demostración si faltan.
+5. Inicia sesión en `http://localhost:8081/login.html`. El cliente puede registrar vehículos, consultar horarios, reservar, extender/cancelar y ver confirmaciones. En administración, `Movimientos` permite operaciones manuales y un simulador de placa/código.
+
+### Pruebas
+
+Usa una base separada, por ejemplo `miparqueo_test_db`, y carga en ella el mismo esquema antes de probar. Para ello, crea la base y cambia las instrucciones `CREATE DATABASE` y `USE` del script SQL a `miparqueo_test_db`; no ejecutes el script de desarrollo sin cambiar su destino. No apuntes las pruebas de integración a datos que quieras conservar: una prueba concurrente crea y elimina sus registros, y las demás usan transacciones de prueba. No se configuró todavía un perfil Maven/Spring independiente para pruebas.
+
+```powershell
+$env:SPRING_DATASOURCE_URL = "jdbc:mysql://localhost:3306/miparqueo_test_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+$env:SPRING_DATASOURCE_USERNAME = "<usuario-pruebas>"
+$env:SPRING_DATASOURCE_PASSWORD = "<clave-pruebas>"
+.\mvnw.cmd test
+```
+
+Para ejecutar solo las pruebas unitarias nuevas:
+
+```powershell
+.\mvnw.cmd "-Dtest=ReservaRulesTest,SimuladorAccesoServiceTest,BarreraSimuladaTest" test
+```
+
+Para probar la integración de reservas y el ciclo de estacionamiento:
+
+```powershell
+.\mvnw.cmd "-Dtest=AppmiparqueoApplicationTests" test
+```
+
+Resultado esperado cuando Java 17, MySQL y el esquema de pruebas estén disponibles: Maven termina con `BUILD SUCCESS` y Surefire informa cero fallos. Las pruebas no se ejecutaron al preparar esta actualización porque el entorno de trabajo no tiene `java` en `PATH` ni `JAVA_HOME` configurado.
+
+## Criterios no funcionales pendientes
+
+Los siguientes puntos no tienen umbrales aprobados en los documentos disponibles; no se asignan cifras arbitrarias.
+
+| Categoría | Criterio propuesto | Verificación o decisión pendiente |
+| --- | --- | --- |
+| Usabilidad | Mostrar disponibilidad, confirmación y errores en el flujo de reserva. | Recorrido de cliente y prueba de mensajes; definir con el instructor el plazo máximo que significa “tiempo real”. |
+| Rendimiento | Medir consultas y reservas bajo concurrencia representativa. | Acordar carga y límite de latencia antes de una prueba de carga. |
+| Fiabilidad | Rechazar exactamente una de dos reservas concurrentes para períodos cruzados; permitir períodos contiguos. | Prueba de integración con MySQL y revisión de estado final. |
+| Seguridad | Hash BCrypt, acceso autenticado y permisos por rol; evitar exponer hashes. | Ampliar pruebas de autorización y definir política CSRF antes de producción. |
+| Privacidad | Un cliente solo consulta su historial y se define conservación de datos. | Pruebas de acceso cruzado; falta una política de retención aprobada. |
+| Interoperabilidad | Definir contrato para lector y barrera y probarlo contra simulador y equipo real. | No hay protocolo ni hardware; la prueba física permanece pendiente. |
+
+El vencimiento se procesa automáticamente cuando se consulta disponibilidad, se reserva o se abre un panel operativo; no hay tarea periódica de fondo. Los eventos SSE actualizan las sesiones conectadas a esta instancia, pero no coordinan varias instancias. Los horarios se manejan como `LocalDateTime`; la política de zona horaria entre navegador, servidor y base de datos aún debe acordarse. Esas limitaciones deben revisarse si el despliegue cambia.

@@ -24,10 +24,12 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -46,13 +48,15 @@ public class ParqueaderoService {
     private final FidelizacionRepository fidelizacionRepository;
     private final UbicacionVehiculoRepository ubicacionRepository;
     private final ParqueaderoRepository parqueaderoRepository;
+    private final DisponibilidadEventPublisher availabilityEvents;
     private final String adminEmail;
 
     public ParqueaderoService(PuestoRepository puestoRepository, MovimientoRepository movimientoRepository,
             PagoRepository pagoRepository, AlertaRepository alertaRepository, UsuariosRepository usuariosRepository,
             VehiculoRepository vehiculoRepository, ReservaRepository reservaRepository,
             FidelizacionRepository fidelizacionRepository, UbicacionVehiculoRepository ubicacionRepository,
-            ParqueaderoRepository parqueaderoRepository, @Value("${app.admin.email}") String adminEmail) {
+            ParqueaderoRepository parqueaderoRepository, DisponibilidadEventPublisher availabilityEvents,
+            @Value("${app.admin.email}") String adminEmail) {
         this.puestoRepository = puestoRepository;
         this.movimientoRepository = movimientoRepository;
         this.pagoRepository = pagoRepository;
@@ -63,6 +67,7 @@ public class ParqueaderoService {
         this.fidelizacionRepository = fidelizacionRepository;
         this.ubicacionRepository = ubicacionRepository;
         this.parqueaderoRepository = parqueaderoRepository;
+        this.availabilityEvents = availabilityEvents;
         this.adminEmail = adminEmail;
     }
 
@@ -84,22 +89,21 @@ public class ParqueaderoService {
         vehiculo.setMarca(defaultValue(marca, "No especificada"));
         vehiculo.setModelo(defaultValue(modelo, "No especificado"));
         vehiculo.setColor(defaultValue(color, "No especificado"));
+        vehiculo.setCodigoQr(generarCodigoQr());
         return vehiculoRepository.save(vehiculo);
     }
 
-    @Transactional
-        public Reserva reservarEspacio(Usuarios cuenta, Integer vehiculoId, Integer puestoId,
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public Reserva reservarEspacio(Usuarios cuenta, Integer vehiculoId, Integer puestoId,
             LocalDateTime horaInicio, LocalDateTime horaFin) {
+        ReservaRules.validatePeriod(horaInicio, horaFin);
+        expirarReservas(LocalDateTime.now());
         Usuarios owner = usuariosRepository.findById(cuenta.getId_usuario())
                 .orElseThrow(() -> new IllegalArgumentException("No se encontró la cuenta cliente."));
         Vehiculo vehiculo = vehiculoRepository.findById(vehiculoId)
                 .orElseThrow(() -> new IllegalArgumentException("No se encontró el vehículo."));
         if (!vehiculo.getUsuario().getId_usuario().equals(owner.getId_usuario())) {
             throw new IllegalArgumentException("Ese vehículo no pertenece a tu cuenta.");
-        }
-        if (horaInicio == null || horaFin == null || !horaFin.isAfter(horaInicio)
-                || Duration.between(horaInicio, horaFin).toHours() > 24) {
-            throw new IllegalArgumentException("La reserva debe tener un rango válido de hasta 24 horas.");
         }
         if (movimientoRepository.findFirstByVehiculo_PlacaIgnoreCaseAndFechaSalidaIsNullOrderByFechaIngresoDesc(vehiculo.getPlaca()).isPresent()) {
             throw new IllegalArgumentException("El vehículo ya está dentro del parqueadero.");
@@ -112,11 +116,10 @@ public class ParqueaderoService {
 
         Puesto puesto = puestoRepository.findLockedById(puestoId)
             .orElseThrow(() -> new IllegalArgumentException("El espacio seleccionado no existe."));
-        if (!DISPONIBLE.equals(puesto.getEstado())) {
+        if (!estaDisponible(puesto, horaInicio, horaFin)) {
             throw new IllegalArgumentException("El espacio seleccionado ya no está disponible.");
         }
         puesto.setEstado("reservado");
-        puestoRepository.save(puesto);
 
         Reserva reserva = new Reserva();
         reserva.setUsuario(owner);
@@ -126,14 +129,19 @@ public class ParqueaderoService {
         reserva.setHoraInicio(horaInicio);
         reserva.setHoraFinEstimada(horaFin);
         reserva.setEstado("reservada");
-        return reservaRepository.save(reserva);
+        reserva = reservaRepository.save(reserva);
+        puestoRepository.save(puesto);
+        crearNotificacionReserva(owner, "RESERVA_CREADA", "Reserva " + reserva.getCodigo() + " confirmada.");
+        availabilityEvents.publishAfterCommit();
+        return reserva;
     }
 
     @Transactional
     public void cancelarReserva(Usuarios cuenta, Integer reservaId) {
+        expirarReservas(LocalDateTime.now());
         Usuarios owner = usuariosRepository.findById(cuenta.getId_usuario())
                 .orElseThrow(() -> new IllegalArgumentException("No se encontró la cuenta cliente."));
-        Reserva reserva = reservaRepository.findById(reservaId)
+        Reserva reserva = reservaRepository.findLockedById(reservaId)
                 .orElseThrow(() -> new IllegalArgumentException("No se encontró la reserva."));
         if (!reserva.getUsuario().getId_usuario().equals(owner.getId_usuario())) {
             throw new IllegalArgumentException("La reserva no pertenece a tu cuenta.");
@@ -141,15 +149,73 @@ public class ParqueaderoService {
         if (!"reservada".equalsIgnoreCase(reserva.getEstado())) {
             throw new IllegalArgumentException("Solo se pueden cancelar reservas que aún no tienen ingreso.");
         }
+        Puesto espacio = puestoRepository.findLockedById(reserva.getEspacio().getId())
+            .orElseThrow(() -> new IllegalArgumentException("El espacio de la reserva ya no existe."));
         reserva.setEstado("cancelada");
         reservaRepository.save(reserva);
-        reserva.getEspacio().setEstado(DISPONIBLE);
-        puestoRepository.save(reserva.getEspacio());
+        actualizarEstadoPuesto(espacio, LocalDateTime.now());
+        crearNotificacionReserva(owner, "RESERVA_CANCELADA", "Reserva " + reserva.getCodigo() + " cancelada.");
+        availabilityEvents.publishAfterCommit();
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public Reserva extenderReserva(Usuarios cuenta, Integer reservaId, LocalDateTime nuevaHoraFin) {
+        expirarReservas(LocalDateTime.now());
+        Usuarios owner = usuariosRepository.findById(cuenta.getId_usuario())
+                .orElseThrow(() -> new IllegalArgumentException("No se encontró la cuenta cliente."));
+        Reserva reserva = reservaRepository.findLockedById(reservaId)
+                .orElseThrow(() -> new IllegalArgumentException("No se encontró la reserva."));
+        if (!reserva.getUsuario().getId_usuario().equals(owner.getId_usuario())) {
+            throw new IllegalArgumentException("La reserva no pertenece a tu cuenta.");
+        }
+        if (!"reservada".equalsIgnoreCase(reserva.getEstado())) {
+            throw new IllegalArgumentException("Solo se puede extender una reserva antes del ingreso.");
+        }
+        Puesto espacio = puestoRepository.findLockedById(reserva.getEspacio().getId())
+            .orElseThrow(() -> new IllegalArgumentException("El espacio de la reserva ya no existe."));
+        if (nuevaHoraFin == null || !nuevaHoraFin.isAfter(reserva.getHoraFinEstimada())) {
+            throw new IllegalArgumentException("La nueva hora debe ampliar el período reservado.");
+        }
+        ReservaRules.validatePeriod(reserva.getHoraInicio(), nuevaHoraFin);
+        boolean conflicto = !reservaRepository.findOverlappingReservations(espacio.getId(),
+                List.of("reservada"), reserva.getHoraInicio(), nuevaHoraFin).stream()
+                .filter(otra -> !otra.getId().equals(reserva.getId())).toList().isEmpty();
+        if (conflicto) {
+            throw new IllegalArgumentException("El espacio tiene otra reserva en ese período.");
+        }
+        reserva.setHoraFinEstimada(nuevaHoraFin);
+        reserva = reservaRepository.save(reserva);
+        crearNotificacionReserva(owner, "RESERVA_EXTENDIDA", "Reserva " + reserva.getCodigo() + " extendida.");
+        availabilityEvents.publishAfterCommit();
+        return reserva;
+    }
+
+    @Transactional
+    public List<Puesto> consultarDisponibilidad(LocalDateTime horaInicio, LocalDateTime horaFin) {
+        ReservaRules.validatePeriod(horaInicio, horaFin);
+        expirarReservas(LocalDateTime.now());
+        return puestoRepository.findAllByOrderByCodigoAsc().stream()
+                .filter(puesto -> estaDisponible(puesto, horaInicio, horaFin))
+                .toList();
+    }
+
+    @Transactional
+    public void expirarReservas(LocalDateTime ahora) {
+        List<Reserva> vencidas = reservaRepository.findByEstadoAndHoraFinEstimadaLessThanEqual("reservada", ahora);
+        for (Reserva reserva : vencidas) {
+            reserva.setEstado("vencida");
+            reservaRepository.save(reserva);
+            actualizarEstadoPuesto(reserva.getEspacio(), ahora);
+        }
+        if (!vencidas.isEmpty()) {
+            availabilityEvents.publishAfterCommit();
+        }
     }
 
     @Transactional
     public Movimiento registrarIngreso(String placa, String tipoVehiculo, String correoCliente) {
         String normalizedPlate = normalizePlate(placa);
+        expirarReservas(LocalDateTime.now());
         Usuarios cliente = usuariosRepository.findByCorreoAndEstado(correoCliente, "activo")
                 .orElseThrow(() -> new IllegalArgumentException("Selecciona una cuenta cliente activa."));
         if (cliente.getCorreo().equalsIgnoreCase(adminEmail)) {
@@ -165,18 +231,32 @@ public class ParqueaderoService {
             vehiculo.setUsuario(cliente);
             vehiculo.setPlaca(normalizedPlate);
             vehiculo.setTipoVehiculo(tipoVehiculo == null || tipoVehiculo.isBlank() ? "otro" : tipoVehiculo.trim());
+            vehiculo.setCodigoQr(generarCodigoQr());
             vehiculo = vehiculoRepository.save(vehiculo);
         } else if (!vehiculo.getUsuario().getId_usuario().equals(cliente.getId_usuario())) {
             throw new IllegalArgumentException("La placa ya está registrada a otro cliente.");
         }
 
+        LocalDateTime now = LocalDateTime.now();
         Reserva reserva = reservaRepository.findFirstByVehiculoAndEstadoOrderByHoraInicioDesc(vehiculo, "reservada").orElse(null);
-        Puesto puesto = reserva == null ? puestoRepository.findFirstByEstadoOrderByCodigoAsc(DISPONIBLE)
+        if (reserva != null) {
+            reserva = reservaRepository.findLockedById(reserva.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("La reserva ya no está disponible."));
+            if (!"reservada".equalsIgnoreCase(reserva.getEstado()) || !reserva.getHoraFinEstimada().isAfter(now)) {
+                throw new IllegalArgumentException("La reserva ya no está vigente.");
+            }
+        }
+        Puesto puesto = reserva == null ? consultarDisponibilidad(now, now.plusHours(1)).stream().findFirst()
             .orElseThrow(() -> new IllegalArgumentException("No hay espacios disponibles.")) : reserva.getEspacio();
+        puesto = puestoRepository.findLockedById(puesto.getId())
+                .orElseThrow(() -> new IllegalArgumentException("El espacio seleccionado ya no existe."));
+        if (OCUPADO.equalsIgnoreCase(puesto.getEstado()) || "mantenimiento".equalsIgnoreCase(puesto.getEstado())
+                || (reserva == null && !estaDisponible(puesto, now, now.plusHours(1)))) {
+            throw new IllegalArgumentException("No hay espacios disponibles.");
+        }
         puesto.setEstado(OCUPADO);
         puestoRepository.save(puesto);
 
-        LocalDateTime now = LocalDateTime.now();
         if (reserva == null) {
             reserva = new Reserva();
             reserva.setUsuario(cliente);
@@ -207,6 +287,7 @@ public class ParqueaderoService {
             ubicacion.setZona(puesto.getZona());
             ubicacionRepository.save(ubicacion);
         }
+        availabilityEvents.publishAfterCommit();
         return movimiento;
     }
 
@@ -224,8 +305,9 @@ public class ParqueaderoService {
         reservaRepository.save(reserva);
 
         Puesto puesto = reserva.getEspacio();
-        puesto.setEstado(DISPONIBLE);
-        puestoRepository.save(puesto);
+        puesto = puestoRepository.findLockedById(puesto.getId())
+            .orElseThrow(() -> new IllegalArgumentException("El espacio de la reserva ya no existe."));
+        actualizarEstadoPuesto(puesto, now);
 
         long minutes = Math.max(1, Duration.between(movimiento.getFechaIngreso(), now).toMinutes());
         long hours = Math.max(1, (minutes + 59) / 60);
@@ -235,7 +317,9 @@ public class ParqueaderoService {
         pago.setMetodo(metodo == null || metodo.isBlank() ? "Efectivo" : metodo.trim());
         pago.setValor(TARIFA_HORA.multiply(BigDecimal.valueOf(hours)));
         pago.setEstado("PENDIENTE");
-        return pagoRepository.save(pago);
+        pago = pagoRepository.save(pago);
+        availabilityEvents.publishAfterCommit();
+        return pago;
     }
 
     @Transactional
@@ -281,6 +365,11 @@ public class ParqueaderoService {
     }
 
     @Transactional
+    public Alerta registrarIncidente(String titulo, String mensaje) {
+        return crearAlerta(titulo, mensaje, "CRITICA");
+    }
+
+    @Transactional
     public void resolverAlerta(Integer id) {
         Alerta alerta = alertaRepository.findById(id).orElseThrow(() -> new IllegalArgumentException("No se encontró la alerta."));
         alerta.setResuelta(true);
@@ -292,6 +381,45 @@ public class ParqueaderoService {
             throw new IllegalArgumentException("La placa es obligatoria.");
         }
         return placa.trim().replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
+    }
+
+    private boolean estaDisponible(Puesto puesto, LocalDateTime horaInicio, LocalDateTime horaFin) {
+        if (OCUPADO.equalsIgnoreCase(puesto.getEstado())
+                || "mantenimiento".equalsIgnoreCase(puesto.getEstado())) {
+            return false;
+        }
+        List<Reserva> vigentes = reservaRepository.findByEspacio_IdAndEstadoInAndHoraFinEstimadaAfter(
+                puesto.getId(), List.of("reservada"), LocalDateTime.now());
+        if ("reservado".equalsIgnoreCase(puesto.getEstado()) && vigentes.isEmpty()) {
+            return false;
+        }
+        return reservaRepository.findOverlappingReservations(puesto.getId(), List.of("reservada"), horaInicio, horaFin)
+                .isEmpty();
+    }
+
+    private void actualizarEstadoPuesto(Puesto puesto, LocalDateTime ahora) {
+        if (OCUPADO.equalsIgnoreCase(puesto.getEstado())
+                || "mantenimiento".equalsIgnoreCase(puesto.getEstado())) {
+            return;
+        }
+        boolean tieneReservasVigentes = !reservaRepository.findByEspacio_IdAndEstadoInAndHoraFinEstimadaAfter(
+                puesto.getId(), List.of("reservada"), ahora).isEmpty();
+        puesto.setEstado(tieneReservasVigentes ? "reservado" : DISPONIBLE);
+        puestoRepository.save(puesto);
+    }
+
+    private void crearNotificacionReserva(Usuarios usuario, String tipo, String mensaje) {
+        Alerta notificacion = new Alerta();
+        notificacion.setUsuario(usuario);
+        notificacion.setTitulo("Actualización de reserva");
+        notificacion.setMensaje(mensaje);
+        notificacion.setNivel(tipo);
+        notificacion.setResuelta(false);
+        alertaRepository.save(notificacion);
+    }
+
+    private String generarCodigoQr() {
+        return "MP-" + UUID.randomUUID().toString().replace("-", "").toUpperCase(Locale.ROOT);
     }
 
     private String requiredValue(String value, String field) {
