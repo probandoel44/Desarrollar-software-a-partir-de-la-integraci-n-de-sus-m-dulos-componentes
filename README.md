@@ -338,17 +338,17 @@ La lista se obtuvo del endpoint público de repositorios de GitHub el 2026-11-22
 
 | Repositorio | Uso/evidencia visible | Rama y commit revisados | Estado para la entrega MiParqueo |
 | --- | --- | --- | --- |
-| [Desarrollar-software-a-partir-de-la-integraci-n-de-sus-m-dulos-componentes](https://github.com/probandoel44/Desarrollar-software-a-partir-de-la-integraci-n-de-sus-m-dulos-componentes) | Aplicación integrada Spring Boot MVC con capas de controladores, servicios, repositorios, modelos y vistas. | `main`, `e39245a0f227d1e0d29e35745a4b7df938b1044e` | Candidato canónico recomendado; falta aprobación oficial y pruebas asociadas a esta versión. |
+| [Desarrollar-software-a-partir-de-la-integraci-n-de-sus-m-dulos-componentes](https://github.com/probandoel44/Desarrollar-software-a-partir-de-la-integraci-n-de-sus-m-dulos-componentes) | Aplicación integrada Spring Boot MVC con capas de controladores, servicios, repositorios, modelos y vistas. | `main`, `9391b2cb7b1e0f2c52197945073ab85742fff2c9` | Candidato canónico recomendado; falta aprobación oficial y pruebas asociadas a esta versión. |
 | [appMiparqueo](https://github.com/probandoel44/appMiparqueo) | Otra copia del proyecto Java MiParqueo; README contiene instalación y esquema local. | `main`, `f321e5db81f6803fa94736f9baea4f073e0dd98f` | Snapshot separado; comparar con el candidato antes de tratarlo como fuente vigente. |
 | [appmiparqueo-master](https://github.com/probandoel44/appmiparqueo-master) | Copia importada bajo una carpeta `appmiparqueo-master`; GitHub reporta Java. | `main`, `0aeb7c49bf393f94427cc24fcef82151facf9a65` | Snapshot anterior/alternativo; no se verificó como dependencia del candidato. |
 | [app-mi-parqueo-vista-main](https://github.com/probandoel44/app-mi-parqueo-vista-main) | Copia de vistas y recursos web bajo una carpeta `app-mi-parqueo-vista-main`. | `main`, `c5ac91970a32cf13238ec11b788e97b6aecc91dc` | Snapshot de interfaz; no hay evidencia de un backend o despliegue independiente. |
 | [app-mi-parqueo-javaScript-y-css-master](https://github.com/probandoel44/app-mi-parqueo-javaScript-y-css-master) | Copia del proyecto de vistas/JavaScript/CSS con código Java anterior, importada bajo carpeta homónima. | `main`, `0f3666c057af7e7c78a07613d17238f37dc93230` | Snapshot anterior; no se debe sincronizar a ciegas con la aplicación candidata. |
 | [Desarrollo-de-servicios-web-main](https://github.com/probandoel44/Desarrollo-de-servicios-web-main) | Copia importada del proyecto integrado anterior, bajo carpeta homónima. | `main`, `3c1e47f7bff27e0b726f75c23dd4abfbe141bb1c` | Antecesor/snapshot; no contiene necesariamente los cambios del candidato. |
 | [Mi-parqueo-JDBC-servlet-main](https://github.com/probandoel44/Mi-parqueo-JDBC-servlet-main) | Prototipo Java Servlet/JDBC, con `src/miparqueo` y biblioteca `lib`. | `main`, `28d5d7d8f144b0a4f2c602b1638103e572128a07` | Prototipo distinto; no se encontró integración con la aplicación Spring/JPA. |
-| [M-dulos-integrados.](https://github.com/probandoel44/M-dulos-integrados.) | GitHub muestra repositorio vacío, sin árbol de código. | Sin commit de contenido | Sin módulo verificable; pendiente de definir propósito. |
+| [M-dulos-integrados.](https://github.com/probandoel44/M-dulos-integrados.) | Copia completa del proyecto integrado subida desde este repositorio. No representa un módulo independiente. | `main`, `9391b2cb7b1e0f2c52197945073ab85742fff2c9` | Espejo del candidato; decidir si se conserva o si la entrega usará solo el repositorio canónico. |
 | [Calculadora.java-master](https://github.com/probandoel44/Calculadora.java-master) | Proyecto Java de calculadora, importado bajo carpeta homónima. | `main`, `ebbc0b7d8e907e847c117f1aea3e80ec7a24fd7a` | No pertenece a MiParqueo; excluido de la evidencia funcional. |
 
-La URL al código fuente no es una URL de ejecución. Solo el primer repositorio es el candidato integrado recomendado; sus capas son partes de la misma aplicación y no requieren una URL por controlador. Las copias no se actualizan automáticamente y no están demostradas como servicios independientes. No se propagan cambios funcionales a snapshots, al prototipo JDBC, al repositorio vacío ni a la calculadora porque hacerlo sin comparar y definir el rol de cada repositorio podría crear versiones divergentes o atribuir requisitos a un proyecto ajeno.
+La URL al código fuente no es una URL de ejecución. Solo el primer repositorio es el candidato canónico recomendado; `M-dulos-integrados.` es una copia de ese proyecto en el mismo commit. Sus capas son partes de una aplicación y no requieren una URL por controlador. Las copias históricas no se actualizan automáticamente ni están demostradas como servicios independientes. La calculadora es ajena a MiParqueo y no se modifica con requisitos de parqueadero.
 
 ### Requisitos de la evidencia
 
@@ -357,7 +357,7 @@ La URL al código fuente no es una URL de ejecución. Solo el primer repositorio
 | Estudiar el componente formativo. | No se localizó el PDF SENA `requerimientos.pdf` en el workspace. | Pendiente: adjuntar el PDF o un enlace accesible y registrar los conceptos aplicables. |
 | Conocer los requerimientos del sistema. | Este README contiene la matriz R01–R10 basada en el resumen funcional compartido y el código revisado. | Parcial: falta contrastarla con el informe oficial de evaluación; el resumen no sustituye ese informe. |
 | Documentos o actas de aprobación. | No se encontró un acta firmada ni evidencia equivalente. | Pendiente: anexar la aprobación auténtica. No se infieren firmas, fechas ni responsables. |
-| Repositorio de control de versiones para entregar código. | El candidato está en GitHub, rama `main`, commit `e39245a0f227d1e0d29e35745a4b7df938b1044e`. | Existe control de versiones; la etiqueta/release oficial para entrega está pendiente. |
+| Repositorio de control de versiones para entregar código. | El candidato está en GitHub, rama `main`, commit `9391b2cb7b1e0f2c52197945073ab85742fff2c9`. | Existe control de versiones; la etiqueta/release oficial para entrega está pendiente. |
 | Archivos ejecutables. | `pom.xml` define una aplicación Java/Spring Boot. No se encontró un JAR generado atribuible a este commit. | Pendiente: generar y verificar el JAR. Un `.exe` no corresponde a esta aplicación web Java; el JAR es el artefacto esperado si la compilación lo genera. |
 | URLs desplegadas. | El README contiene direcciones locales `http://localhost:8081/...`; no se encontró URL pública de despliegue. | Pendiente: aportar y verificar ambiente/URL desplegada. `localhost` no es una URL accesible para el evaluador. |
 | Documentación por módulo/componente, entradas y salidas. | La estructura de capas y la matriz R01–R10 están descritas aquí; los formularios y controladores muestran parámetros de reserva y movimientos. | Parcial: completar fichas con tipos, validaciones, respuestas, errores y efectos persistidos por flujo. |
@@ -372,13 +372,13 @@ La URL al código fuente no es una URL de ejecución. Solo el primer repositorio
 - Las confirmaciones de reserva son internas a la aplicación. No se documenta ni se configura un canal externo de correo o SMS.
 - No se ha establecido un umbral de latencia para “tiempo real”, una carga objetivo ni una URL de producción.
 - Los reportes guardados en `target` son artefactos preexistentes y no deben presentarse como resultado de la versión `e39245a`.
-- El repositorio vacío `M-dulos-integrados.` no se considera dependencia de ejecución ni módulo entregado hasta que se confirme su propósito.
+- `M-dulos-integrados.` contiene ahora una copia del proyecto integrado; no se considera un módulo desplegado ni una dependencia distinta del candidato canónico.
 
 ### Acciones para cerrar la entrega
 
 1. Adjuntar el informe oficial de evaluación y `requerimientos.pdf`.
 2. Obtener o adjuntar el acta real de aprobación de requerimientos.
-3. Confirmar si el repositorio vacío debe alojar algún contenido o si se mantiene fuera de la entrega.
+3. Confirmar si `M-dulos-integrados.` se conserva como espejo o si la entrega oficial usará únicamente el repositorio canónico.
 4. Definir el commit/tag oficial, compilar el JAR y registrar su nombre y ubicación reales.
 5. Ejecutar pruebas unitarias, de integración y un flujo integrado en un ambiente aislado; guardar comandos y resultados asociados al commit oficial.
 6. Aportar la URL real de despliegue o declarar formalmente que solo se entrega ejecución local.
